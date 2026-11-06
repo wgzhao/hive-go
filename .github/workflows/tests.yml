@@ -1,0 +1,168 @@
+name: Tests
+
+on:
+  # Run CI on pull requests only. PR checks already validate the code that
+  # will land on master, so a second full run after every merge is redundant.
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code || steps.dispatch.outputs.code }}
+    steps:
+    - uses: actions/checkout@v4
+    # Documentation, images, and other non-code files do not affect the test
+    # suite, so skip the expensive jobs for those changes.
+    - uses: dorny/paths-filter@v3
+      id: filter
+      if: github.event_name == 'pull_request'
+      with:
+        filters: |
+          code:
+            - '**/*.go'
+            - 'go.mod'
+            - 'go.sum'
+            - 'Makefile'
+            - 'cmd/hive/e2e/**'
+            - '.github/workflows/tests.yml'
+            - '.github/workflows/release.yml'
+            - '.github/scripts/**'
+    # Manual runs always exercise the full suite.
+    - id: dispatch
+      if: github.event_name == 'workflow_dispatch'
+      run: echo "code=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+
+    - name: make build
+      run: make build
+
+    # There are no unit tests; `make test` is go vet.
+    - name: make test
+      run: make test
+
+    - name: check formatting
+      run: |
+        unformatted=$(gofmt -l .)
+        if [ -n "$unformatted" ]; then
+          echo "gofmt reports unformatted files:" >&2
+          echo "$unformatted" >&2
+          exit 1
+        fi
+
+  e2e:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+
+    # The E2E suite needs a real HiveServer2. The verified private endpoint is
+    # not reachable from GitHub-hosted runners, so start the official Apache
+    # Hive image locally (embedded Derby, NONE auth) instead.
+    - name: start HiveServer2
+      run: ./.github/scripts/install-hive.sh
+      env:
+        HIVE_IMAGE: apache/hive:4.0.1
+
+    - name: make e2e
+      env:
+        HIVE_HOST: 127.0.0.1
+        HIVE_PORT: "10000"
+        HIVE_AUTH: none
+        HIVE_USER: hive
+        HIVE_ALLOW_DDL: "1"
+      run: make e2e
+
+    - name: HiveServer2 logs
+      if: always()
+      run: docker logs --tail 300 hive-go-ci || true
+
+    - name: stop HiveServer2
+      if: always()
+      run: ./.github/scripts/stop-hive.sh
+
+    # Per-case stdout/stderr/exit, report.txt, report.json, and cleanup result.
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: e2e-artifacts
+        path: cmd/hive/e2e/artifacts/
+        if-no-files-found: warn
+        retention-days: 14
+
+  cross-build:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+
+    # The library and CLI are pure Go, so every target should compile without
+    # requiring cgo or platform-specific toolchains.
+    - name: cross-compile
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: "0"
+      run: go build ./...
+
+  # A single stable check for branch protection. It succeeds when the code
+  # jobs pass, and when they are intentionally skipped for docs-only changes.
+  ci-success:
+    if: always()
+    needs: [changes, build, e2e, cross-build]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Verify results
+      env:
+        CODE: ${{ needs.changes.outputs.code }}
+        CHANGES_RESULT: ${{ needs.changes.result }}
+        BUILD_RESULT: ${{ needs.build.result }}
+        E2E_RESULT: ${{ needs.e2e.result }}
+        CROSS_RESULT: ${{ needs.cross-build.result }}
+      run: |
+        if [ "$CHANGES_RESULT" != "success" ]; then
+          echo "changes job failed"
+          exit 1
+        fi
+
+        if [ "$CODE" != "true" ]; then
+          echo "No source changes; skipping code jobs."
+          exit 0
+        fi
+
+        if [ "$BUILD_RESULT" != "success" ] || [ "$E2E_RESULT" != "success" ] || [ "$CROSS_RESULT" != "success" ]; then
+          echo "build=$BUILD_RESULT e2e=$E2E_RESULT cross-build=$CROSS_RESULT"
+          exit 1
+        fi
