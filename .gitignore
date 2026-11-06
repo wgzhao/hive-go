@@ -1,0 +1,13 @@
+# build output
+/dist/
+/hive
+/hive-go
+*.exe
+*.test
+
+# E2E
+/cmd/hive/e2e/artifacts/
+/cmd/hive/e2e/.env
+
+# local history
+.hive-go_history

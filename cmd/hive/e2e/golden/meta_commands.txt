@@ -1,0 +1,6 @@
+tab_name
+e2e_types
+col_name,data_type,comment
+id,int,
+s,string,
+d,double,

@@ -1,0 +1,22 @@
+hive-go
+Copyright (c) 2026 hive-go contributors
+
+This product includes the following third-party material:
+
+1. Apache Hive TCLIService IDL
+   File: internal/tcliservice/TCLIService.thrift
+   Source: https://github.com/apache/hive (rel/release-4.0.0)
+   License: Apache License 2.0
+
+2. Apache Thrift
+   Go runtime and generated-code conventions:
+   https://github.com/apache/thrift
+   License: Apache License 2.0
+
+3. gohive
+   The SASL PLAIN handshake framing and Hive column decoding behavior were
+   cross-checked against https://github.com/beltran/gohive (MIT). No gohive
+   source files are vendored into this repository.
+
+The generated files under internal/tcliservice were produced from the Apache
+Hive IDL with thrift-compiler 0.19.0.
