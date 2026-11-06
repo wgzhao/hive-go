@@ -75,8 +75,13 @@ After cancellation the session is reusable.
 - The verified environment was Hive `3.1.0.3.1.4.0-315`, auth `NONE`, protocol
   V10. Examples default to `127.0.0.1:10000`; set `HIVE_HOST`/`HIVE_PORT` for
   your endpoint. `HIVE_ALLOW_DDL=1` is required.
-- E2E is not run in GitHub-hosted CI because the test endpoint is not publicly
-  reachable; run it manually or from a self-hosted runner.
+- GitHub-hosted CI cannot reach the verified private endpoint, so the `Tests`
+  workflow starts the official `apache/hive:4.0.1` image locally
+  (`.github/scripts/install-hive.sh`, embedded Derby, `NONE` auth) and runs the
+  same E2E suite against it. It forces `hive.execution.engine=mr`: the image's
+  Tez-on-local-filesystem path drops blob-rowset staging files, which makes the
+  blob case return an empty result. Per-case artifacts are uploaded by the
+  workflow. Runs against other endpoints are manual or on a self-hosted runner.
 - `make e2e` requires the environment shown in the README. `E2E_SLOW=1` adds
   cancellation; `UPDATE_GOLDEN=1` rewrites goldens.
 

@@ -215,6 +215,13 @@ user owns the data and `DROP DATABASE ... CASCADE` removes it.
 `E2E_SLOW=1` adds the cancellation case. `UPDATE_GOLDEN=1` regenerates golden
 files from the current server output.
 
+The `Tests` GitHub workflow runs the same suite against the official
+`apache/hive:4.0.1` image started on the runner (embedded Derby metastore,
+`NONE` auth, local MR engine); its per-case artifacts are attached to the
+workflow run. The verified private endpoint is not reachable from hosted
+runners, so runs against other servers remain manual or belong on a
+self-hosted runner.
+
 Artifacts are written to `cmd/hive/e2e/artifacts/<UTC timestamp>_<pid>/`:
 
 ```
