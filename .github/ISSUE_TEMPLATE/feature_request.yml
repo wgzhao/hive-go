@@ -1,0 +1,84 @@
+name: Feature request
+description: Suggest a capability, CLI improvement, or output format.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `hive-go` is intentionally small. Please describe the problem first; a
+        focused change that fits the existing design is much more likely to be
+        accepted than a broad new subsystem.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and discussions for this request.
+          required: true
+        - label: I read the "Limitations" section of the README.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the workflow that is awkward, slow, or impossible today.
+      placeholder: "When I ... I have to ... because ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: |
+        Show the command, flag, output, or API you would like. Concrete examples
+        help: exact flags, expected stdout/stderr, and exit codes.
+      placeholder: |
+        hive --new-flag ... -e "SELECT ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing flags, workarounds, or other tools that solve part of this.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI flags and configuration
+        - Connection, authentication, protocol
+        - Result decoding and correctness
+        - Output formats
+        - REPL and meta commands
+        - Performance and memory
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Compatibility and constraints
+      description: |
+        Does this require a new dependency, CGO, TLS, Kerberos, or a change to
+        the public API? Would it change existing output or exit codes?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to work on this and open a pull request.
+          required: false

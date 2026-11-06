@@ -6,7 +6,7 @@ BIN := hive
 LDFLAGS := -s -w -X main.version=$(VERSION)
 GO ?= go
 
-.PHONY: all build install vet e2e test generate clean release cross help
+.PHONY: all build install vet e2e test generate assets clean release cross help
 
 all: build
 
@@ -33,6 +33,10 @@ generate:
 	rm -rf internal/tcliservice/tcliservice
 	gofmt -w internal/tcliservice/*.go
 
+# Requires Pillow and the Noto fonts; see docs/README.md.
+assets:
+	python3 docs/generate-assets.py
+
 clean:
 	rm -f $(BIN)
 	rm -rf dist
@@ -53,12 +57,13 @@ cross:
 
 help:
 	@echo "Targets:"
-	@echo "  build      build ./$(BIN) (the installed command is `hive`)"
-	@echo "  install    go install the CLI as `hive`"
+	@echo "  build      build ./$(BIN) (the installed command is 'hive')"
+	@echo "  install    go install the CLI as 'hive'"
 	@echo "  vet        go vet ./..."
 	@echo "  e2e        run the real-server E2E suite (requires HIVE_ALLOW_DDL=1)"
 	@echo "  test       alias for vet (no unit tests)"
 	@echo "  generate   regenerate internal/tcliservice (thrift 0.19.0)"
+	@echo "  assets     regenerate docs images (requires Pillow)"
 	@echo "  cross      cross-compile linux/darwin/windows amd64+arm64"
 	@echo "  release    same as cross, binaries in dist/"
 	@echo "  clean      remove the binary and dist/"

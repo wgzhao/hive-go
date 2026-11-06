@@ -11,3 +11,7 @@
 
 # local history
 .hive-go_history
+
+# docs asset generator
+__pycache__/
+*.pyc

@@ -1,0 +1,155 @@
+name: Bug report
+description: Report a reproducible problem with the hive CLI or Go client.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        **Do not include passwords, LDAP credentials, tokens, internal hostnames,
+        or customer data.** For security vulnerabilities, follow
+        [SECURITY.md](https://github.com/wgzhao/hive-go/blob/master/SECURITY.md)
+        instead of opening a public issue.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I am running the latest release or the current master branch.
+          required: true
+        - label: This is not a security vulnerability, and I have redacted credentials and sensitive data.
+          required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A short description of the problem and its impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Include the exact command and SQL. Replace hosts, users, and passwords
+        with placeholders.
+      placeholder: |
+        1. Run: hive -u hive2://HOST:10000/default -n USER --timing -e "SELECT ..."
+        2. Observe: ...
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect the client to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: |
+        Paste the relevant stdout/stderr and exit code. Run with `--verbose`
+        and `--timing` when possible. Redact secrets.
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install hive?
+      options:
+        - go install
+        - Prebuilt release archive
+        - Built from source
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: hive version
+      description: Output of `hive --version`.
+      placeholder: "v0.1.0 or dev (commit abc1234)"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and architecture
+      placeholder: "Linux amd64, macOS arm64, Windows amd64, ..."
+    validations:
+      required: true
+
+  - type: input
+    id: server
+    attributes:
+      label: HiveServer2 version
+      description: For example `3.1.0.3.1.4.0-315` or `4.0.1`.
+      placeholder: "Hive 3.1.0.3.1.4.0-315"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: auth
+    attributes:
+      label: Authentication mode
+      options:
+        - none
+        - nosasl
+        - ldap
+        - other / unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Protocol version
+      options:
+        - auto (default)
+        - v10
+        - v6
+        - unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: output
+    attributes:
+      label: Output format
+      options:
+        - table (default)
+        - vertical
+        - csv
+        - tsv
+        - json
+        - not applicable
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Additional context
+      description: |
+        Logs, stack traces, a minimal table definition, or anything else that
+        helps. If you are using a custom HiveServer2 configuration (HTTP
+        transport, SSL, Kerberos), mention it here. Never paste credentials.
+      render: text
+    validations:
+      required: false

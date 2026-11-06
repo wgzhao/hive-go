@@ -1,16 +1,137 @@
-# hive-go
+<p align="center">
+  <img src="docs/logo.png" width="96" alt="hive-go logo">
+</p>
 
-A small, pure-Go command-line client for HiveServer2, intended as a lightweight
-replacement for the Java Hive CLI. The project is called **hive-go**; the
-installed command is **`hive`**, mirroring `hdfs-go`'s `hdfs` binary.
+<h1 align="center">hive-go</h1>
 
-It speaks the Thrift `TCLIService` protocol directly, so it does not need a JVM,
-Hadoop client libraries, `hive-jdbc`, or a Hive installation on the machine
-running it.
+<p align="center">
+  <strong>A pure-Go HiveServer2 client and CLI.</strong><br>
+  Query Apache Hive from a single static binary — no JVM, no Hadoop client<br>
+  libraries, no CGO, and no local Hive installation.
+</p>
+
+<p align="center">
+  <a href="https://github.com/wgzhao/hive-go/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/wgzhao/hive-go/actions/workflows/tests.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/wgzhao/hive-go"></a>
+  <a href="go.mod"><img alt="Go 1.22+" src="https://img.shields.io/github/go-mod/go-version/wgzhao/hive-go"></a>
+  <a href="https://github.com/wgzhao/hive-go/releases"><img alt="Platforms: Linux, macOS, Windows" src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20Windows-blue"></a>
+</p>
+
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#why-another-client">Why hive-go</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#repl">REPL</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+<p align="center">
+  <img src="docs/demo.png" width="760" alt="hive-go running a SELECT query and printing a table">
+</p>
+
+The project is called **hive-go**; the installed command is **`hive`**, mirroring
+`hdfs-go`'s `hdfs` binary. It speaks the Thrift `TCLIService` protocol directly,
+so the machine running it does not need a JVM, Hadoop client libraries,
+`hive-jdbc`, or a Hive installation.
 
 `hive` is intentionally narrower than Beeline: it connects, runs SQL, streams
 result sets, supports a REPL and scripts, and prints results as tables,
 vertical blocks, CSV, TSV, or JSON.
+
+## Highlights
+
+- **Zero runtime dependencies.** One statically linked binary; `CGO_ENABLED=0`
+  builds work, including cross-compilation.
+- **Speaks HiveServer2 natively.** Thrift `TCLIService` over binary protocol,
+  SASL PLAIN (`NONE`/`LDAP`), `NOSASL`, and protocol V10 or V6.
+- **Script-friendly by design.** Result data goes to stdout, diagnostics to
+  stderr, with stable exit codes and five output formats.
+- **A REPL you can live in.** History, `!` meta commands, multiple statements,
+  and Ctrl-C query cancellation that keeps the session usable.
+- **Fits an existing cluster.** Reads `hive-site.xml` and `HIVE_*` environment
+  variables, with flags taking precedence.
+- **Proven against real servers.** The E2E suite runs against Hive 3.1 and 4.0,
+  covering columnar, row-based, and blob rowset results.
+
+## Install
+
+### With Go
+
+Requires Go 1.22+:
+
+```bash
+go install github.com/wgzhao/hive-go/cmd/hive@latest
+```
+
+The binary lands in `$(go env GOPATH)/bin` (usually `~/go/bin`). Add that
+directory to `PATH` if it is not there already.
+
+### Prebuilt binaries
+
+Tagged releases publish `hive-<tag>-<os>-<arch>.tar.gz` for Linux and macOS and
+`.zip` for Windows, covering `amd64` and `arm64`. Download the archive for your
+platform from [Releases](https://github.com/wgzhao/hive-go/releases), extract
+it, and put `hive` on `PATH`.
+
+### From source
+
+```bash
+make build          # produces ./hive
+# or
+CGO_ENABLED=0 go build -trimpath -o hive ./cmd/hive
+```
+
+Cross-compilation is supported:
+
+```bash
+make cross          # linux/darwin/windows, amd64+arm64
+```
+
+## Quick start
+
+```bash
+# NONE auth. Hive ignores the password but requires a non-empty one; the
+# client supplies "x" automatically.
+hive -u hive2://127.0.0.1:10000/default -n hive \
+  -e "SELECT 1 AS x, 'hello' AS s"
+
+# Interactive REPL
+hive -u hive2://127.0.0.1:10000/default -n hive
+
+# Script file
+hive -u hive2://127.0.0.1:10000/default -n hive -f query.sql
+
+# Non-TTY stdin
+printf 'SELECT 1;\n' | hive -u hive2://127.0.0.1:10000/default
+
+# JSON output for another tool
+hive -u hive2://127.0.0.1:10000/default -n hive \
+  --output-format json -e "SELECT * FROM default.demo LIMIT 10"
+```
+
+URL forms accepted:
+
+```
+hive2://[user[:password]@]host[:port][/database]
+hive://[user[:password]@]host[:port][/database]
+jdbc:hive2://host:10000/default;auth=NONE
+```
+
+`;auth=...` and `?auth=...` are recognized; other JDBC properties are ignored.
+
+## Why another client?
+
+| Tool | Form | Pure Go | CLI | Notes |
+|---|---|---|---|---|
+| **hive** (this project) | HiveServer2 TCLIService client + CLI | yes | yes | No JVM/Hadoop/CGO; focused Hive UX |
+| Apache Beeline | Java CLI | no | yes | The reference client; requires JVM + jars |
+| `usql` + `gohive/v2` | generic SQL CLI + Go driver | yes | yes | General psql-style tool; Hive is one driver among many |
+| `beltran/gohive/v2` | Go `database/sql` driver | yes | no | Library; Kerberos variant uses CGO |
+| DBeaver / DataGrip | JDBC GUI | no | GUI | Heavy, JVM-dependent |
+
+The point of this project is a single static binary that behaves like a small
+Beeline for the common case: connect to HiveServer2, run SQL, read results.
 
 ## Status
 
@@ -28,63 +149,6 @@ Verified end-to-end against a real HiveServer2:
 No unit tests are used. The verification mechanism is the E2E suite under
 `cmd/hive/e2e/`, which talks to a real server and writes a repeatable
 artifact directory.
-
-## Why another client?
-
-| Tool | Form | Pure Go | CLI | Notes |
-|---|---|---|---|---|
-| **hive** (this project) | HiveServer2 TCLIService client + CLI | yes | yes | No JVM/Hadoop/CGO; focused Hive UX |
-| Apache Beeline | Java CLI | no | yes | The reference client; requires JVM + jars |
-| `usql` + `gohive/v2` | generic SQL CLI + Go driver | yes | yes | General psql-style tool; Hive is one driver among many |
-| `beltran/gohive/v2` | Go `database/sql` driver | yes | no | Library; Kerberos variant uses CGO |
-| DBeaver / DataGrip | JDBC GUI | no | GUI | Heavy, JVM-dependent |
-
-The point of this project is a single static binary that behaves like a small
-Beeline for the common case: connect to HiveServer2, run SQL, read results.
-
-## Build
-
-Requires Go 1.22+.
-
-```bash
-make build          # produces ./hive
-# or
-CGO_ENABLED=0 go build -trimpath -o hive ./cmd/hive
-```
-
-`CGO_ENABLED=0` is supported, so cross-compilation is straightforward:
-
-```bash
-make cross
-```
-
-## Quick start
-
-```bash
-# NONE auth. Hive ignores the password but requires a non-empty one; the
-# client supplies "x" automatically.
-./hive -u hive2://127.0.0.1:10000/default -n hive \
-  -e "SELECT 1 AS x, 'hello' AS s"
-
-# Interactive REPL
-./hive -u hive2://127.0.0.1:10000/default -n hive
-
-# Script file
-./hive -u hive2://127.0.0.1:10000/default -n hive -f query.sql
-
-# Non-TTY stdin
-printf 'SELECT 1;\n' | ./hive -u hive2://127.0.0.1:10000/default
-```
-
-URL forms accepted:
-
-```
-hive2://[user[:password]@]host[:port][/database]
-hive://[user[:password]@]host[:port][/database]
-jdbc:hive2://host:10000/default;auth=NONE
-```
-
-`;auth=...` and `?auth=...` are recognized; other JDBC properties are ignored.
 
 ## Authentication
 
@@ -128,12 +192,12 @@ unsupported configuration rather than silently ignored.
 ## Output
 
 ```bash
-./hive ... --output-format table       # default, Beeline-like borders
-./hive ... --output-format vertical
-./hive ... --output-format csv
-./hive ... --output-format tsv
-./hive ... --output-format json
-./hive ... --no-header --null-string '<null>'
+hive ... --output-format table       # default, Beeline-like borders
+hive ... --output-format vertical
+hive ... --output-format csv
+hive ... --output-format tsv
+hive ... --output-format json
+hive ... --no-header --null-string '<null>'
 ```
 
 - Result data goes to stdout; status, errors, info, and timing go to stderr.
@@ -271,6 +335,19 @@ The IDL is `internal/tcliservice/TCLIService.thrift` (Apache Hive 4.0.0).
 - No SQL parser, autocomplete, or syntax highlighting; statements are sent to
   the server as written.
 - No Kerberos means this cannot connect to most Kerberized production clusters.
+
+## Community and contributing
+
+- **Questions and ideas:** use
+  [GitHub Discussions](https://github.com/wgzhao/hive-go/discussions).
+- **Bugs and feature requests:** open an issue; the templates ask for the
+  version, server details, and a reproduction.
+- **Security reports:** do not open a public issue. Follow
+  [SECURITY.md](SECURITY.md).
+- **Pull requests:** read [CONTRIBUTING.md](CONTRIBUTING.md) first. The project
+  is verified by E2E tests against a real HiveServer2, not unit tests, and all
+  participants are expected to follow the
+  [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
