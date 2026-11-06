@@ -12,6 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/wgzhao/hive-go/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/wgzhao/hive-go/actions/workflows/tests.yml/badge.svg"></a>
+  <a href="https://github.com/wgzhao/hive-go/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/wgzhao/hive-go?sort=semver"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/wgzhao/hive-go"></a>
   <a href="go.mod"><img alt="Go 1.22+" src="https://img.shields.io/github/go-mod/go-version/wgzhao/hive-go"></a>
   <a href="https://github.com/wgzhao/hive-go/releases"><img alt="Platforms: Linux, macOS, Windows" src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20Windows-blue"></a>
@@ -134,6 +135,11 @@ The point of this project is a single static binary that behaves like a small
 Beeline for the common case: connect to HiveServer2, run SQL, read results.
 
 ## Status
+
+**v0.1.0 is the first public preview.** The client is functional and verified,
+but the project is pre-1.0: CLI flags and the Go API may change, and it has not
+been hardened for every production environment. See the
+[changelog](CHANGELOG.md) for release contents.
 
 Verified end-to-end against a real HiveServer2:
 

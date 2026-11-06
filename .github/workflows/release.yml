@@ -57,7 +57,7 @@ jobs:
           mkdir -p "$name"
           go build -trimpath -ldflags "-s -w -X main.version=${TAG}" \
             -o "$name/hive${EXT}" ./cmd/hive
-          cp README.md LICENSE NOTICE "$name/"
+          cp README.md CHANGELOG.md LICENSE NOTICE "$name/"
 
           if [ "$ARCHIVE" = "zip" ]; then
             zip -r "$name.zip" "$name"
@@ -86,6 +86,13 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum hive-*.tar.gz hive-*.zip > checksums.txt
+          cat checksums.txt
+
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
@@ -93,3 +100,4 @@ jobs:
           files: |
             dist/hive-*.tar.gz
             dist/hive-*.zip
+            dist/checksums.txt

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"time"
 
 	"github.com/pborman/getopt"
@@ -14,7 +15,22 @@ import (
 	"golang.org/x/term"
 )
 
+// version is injected at build time with -ldflags "-X main.version=...".
+// Binaries installed with `go install module@version` receive no ldflags, so
+// fall back to the module version embedded in the Go build info.
 var version = "dev"
+
+func versionString() string {
+	if version != "" && version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if v := info.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return "dev"
+}
 
 type cliOptions struct {
 	url      string
@@ -64,7 +80,7 @@ func runCLI(args []string) int {
 		return 0
 	}
 	if opts.showVersion {
-		fmt.Printf("hive %s\n", version)
+		fmt.Printf("hive %s\n", versionString())
 		return 0
 	}
 
