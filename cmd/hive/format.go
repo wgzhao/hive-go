@@ -247,8 +247,13 @@ func pad(s string, width int, right bool) string {
 	return s + spaces
 }
 
+// widthCondition fixes ambiguous characters at width 1. The package-level
+// runewidth helpers read the process locale, which would make table output
+// differ between machines; column layout must be reproducible.
+var widthCondition = runewidth.Condition{EastAsianWidth: false}
+
 func displayWidth(s string) int {
-	return runewidth.StringWidth(s)
+	return widthCondition.StringWidth(s)
 }
 
 // truncateDisplay cuts s to at most width terminal cells, appending an
@@ -263,7 +268,7 @@ func truncateDisplay(s string, width int) string {
 	var b strings.Builder
 	used := 0
 	for _, r := range s {
-		w := runewidth.RuneWidth(r)
+		w := widthCondition.RuneWidth(r)
 		if used+w > width-1 {
 			break
 		}

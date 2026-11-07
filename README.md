@@ -243,6 +243,7 @@ hive ... --binary-format hex         # text, base64 (default) or hex
 - Result data goes to stdout; status, errors, info, and timing go to stderr.
 - Table/vertical/TSV escape control characters visibly (`\n`, `\t`, `\r`, `\\`).
   Column widths use terminal display width, so CJK and emoji align correctly.
+  Ambiguous-width characters count as one cell so layout is locale-independent.
 - CSV follows RFC 4180 quoting and keeps embedded newlines inside quoted fields.
 - JSON preserves NULL as `null`, booleans as booleans, integer/float values as
   numbers, and binary values as base64 by default. JSON and JSONL are written
