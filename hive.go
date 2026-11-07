@@ -51,6 +51,10 @@ type Config struct {
 	// "v10" or "v6".
 	Protocol string
 
+	// SessionConfig is sent with OpenSession and applies to the whole
+	// session (for example hive.execution.engine).
+	SessionConfig map[string]string
+
 	// ConfOverlay is applied to every ExecuteStatement call. It is useful
 	// for session-local settings such as hive.execution.engine.
 	ConfOverlay map[string]string

@@ -110,6 +110,9 @@ func (c *Client) openSession(ctx context.Context, proto tcliservice.TProtocolVer
 	password := c.cfg.Password
 	req.Username = &username
 	req.Password = &password
+	if len(c.cfg.SessionConfig) > 0 {
+		req.Configuration = c.cfg.SessionConfig
+	}
 
 	resp, err := c.tc.OpenSession(ctx, req)
 	if err != nil {
@@ -154,6 +157,39 @@ func (c *Client) Close() error {
 func (c *Client) Protocol() string {
 	name := c.proto.String()
 	return strings.TrimPrefix(name, "HIVE_CLI_SERVICE_PROTOCOL_")
+}
+
+// ServerInfo returns the DBMS name and version reported by the server.
+func (c *Client) ServerInfo(ctx context.Context) (name, version string, err error) {
+	if c.session == nil || c.tc == nil {
+		return "", "", ErrClosed
+	}
+	name, err = c.getInfo(ctx, tcliservice.TGetInfoType_CLI_DBMS_NAME)
+	if err != nil {
+		return "", "", err
+	}
+	version, err = c.getInfo(ctx, tcliservice.TGetInfoType_CLI_DBMS_VER)
+	if err != nil {
+		return "", "", err
+	}
+	return name, version, nil
+}
+
+func (c *Client) getInfo(ctx context.Context, infoType tcliservice.TGetInfoType) (string, error) {
+	req := tcliservice.NewTGetInfoReq()
+	req.SessionHandle = c.session
+	req.InfoType = infoType
+	resp, err := c.tc.GetInfo(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("GetInfo: %w", err)
+	}
+	if err := statusError("GetInfo", resp.Status); err != nil {
+		return "", err
+	}
+	if resp.InfoValue == nil {
+		return "", nil
+	}
+	return resp.InfoValue.GetStringValue(), nil
 }
 
 // Config returns a copy of the normalized client configuration.

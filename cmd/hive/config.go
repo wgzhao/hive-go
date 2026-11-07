@@ -16,18 +16,26 @@ import (
 type resolvedOptions struct {
 	cfg hive.Config
 
-	execute string
-	file    string
+	execute  string
+	file     string
+	initFile string
 
-	format     string
-	nullString string
-	noHeader   bool
-	verbose    bool
-	timing     bool
-	silent     bool
+	format         string
+	nullString     string
+	noHeader       bool
+	verbose        bool
+	timing         bool
+	silent         bool
+	force          bool
+	delimiter      string
+	stream         bool
+	maxColumnWidth int
+	binaryFormat   string
 
 	historyFile string
 	noHistory   bool
+
+	vars *variables
 }
 
 type urlOptions struct {
@@ -37,25 +45,85 @@ type urlOptions struct {
 	username string
 	password string
 	auth     string
+	hiveconf []string
+	hivevar  []string
 }
 
 func resolveOptions(o *cliOptions) (*resolvedOptions, error) {
+	if o.passwordFile != "" {
+		if o.password != "" {
+			return nil, fmt.Errorf("--password and --password-file are mutually exclusive")
+		}
+		data, err := os.ReadFile(o.passwordFile)
+		if err != nil {
+			return nil, fmt.Errorf("read password file: %w", err)
+		}
+		o.password = strings.TrimRight(string(data), "\r\n")
+		if o.password == "" {
+			return nil, fmt.Errorf("password file %s is empty", o.passwordFile)
+		}
+		if info, err := os.Stat(o.passwordFile); err == nil && info.Mode().Perm()&0o077 != 0 {
+			fmt.Fprintf(os.Stderr, "Warning: password file %s is accessible by other users (mode %04o)\n",
+				o.passwordFile, info.Mode().Perm())
+		}
+	}
+
+	if o.initFile == "-" {
+		return nil, fmt.Errorf("--init-file cannot read from stdin; pass a file path")
+	}
+
+	delimiter := o.delimiter
+	if delimiter == "" {
+		delimiter = ";"
+	}
+	if err := validateDelimiter(delimiter); err != nil {
+		return nil, err
+	}
+	if o.maxColumnWidth < 0 {
+		return nil, fmt.Errorf("--max-column-width must be zero or positive")
+	}
+
+	binaryFormat := strings.ToLower(strings.TrimSpace(o.binaryFormat))
+	if binaryFormat == "" {
+		binaryFormat = "base64"
+	}
+	switch binaryFormat {
+	case "text", "base64", "hex":
+	default:
+		return nil, fmt.Errorf("unsupported binary format %q (use text, base64 or hex)", o.binaryFormat)
+	}
+
+	nullString := o.nullString
+	if o.nullEmpty {
+		if o.nullStringSeen {
+			return nil, fmt.Errorf("--null-string and --null-empty are mutually exclusive")
+		}
+		nullString = ""
+	}
+
 	res := &resolvedOptions{
-		execute:     o.execute,
-		file:        o.file,
-		format:      strings.ToLower(strings.TrimSpace(o.format)),
-		nullString:  o.nullString,
-		noHeader:    o.noHeader,
-		verbose:     o.verbose,
-		timing:      o.timing,
-		silent:      o.silent,
-		noHistory:   o.noHistory,
-		historyFile: o.historyFile,
+		execute:        o.execute,
+		file:           o.file,
+		initFile:       o.initFile,
+		format:         strings.ToLower(strings.TrimSpace(o.format)),
+		nullString:     nullString,
+		noHeader:       o.noHeader,
+		verbose:        o.verbose,
+		timing:         o.timing,
+		silent:         o.silent,
+		force:          o.force,
+		delimiter:      delimiter,
+		stream:         o.stream,
+		maxColumnWidth: o.maxColumnWidth,
+		binaryFormat:   binaryFormat,
+		noHistory:      o.noHistory,
+		historyFile:    o.historyFile,
+		vars:           newVariables(),
 	}
 	switch res.format {
-	case "table", "vertical", "csv", "tsv", "json":
+	case "table", "vertical", "csv", "tsv", "json", "jsonl":
 	default:
-		return nil, fmt.Errorf("unsupported output format %q (use table, vertical, csv, tsv or json)", o.format)
+		return nil, fmt.Errorf("unsupported output format %q (use table, vertical, csv, tsv, json or jsonl)", o.format)
 	}
 
 	cfg := hive.Config{
@@ -172,6 +240,12 @@ func resolveOptions(o *cliOptions) (*resolvedOptions, error) {
 			}
 			cfg.Auth = auth
 		}
+		if err := res.vars.add(u.hiveconf, res.vars.hiveconf); err != nil {
+			return nil, fmt.Errorf("URL hiveconf: %w", err)
+		}
+		if err := res.vars.add(u.hivevar, res.vars.hivevar); err != nil {
+			return nil, fmt.Errorf("URL hivevar: %w", err)
+		}
 	}
 
 	// CLI flags have the highest precedence.
@@ -202,6 +276,15 @@ func resolveOptions(o *cliOptions) (*resolvedOptions, error) {
 	}
 	if o.fetchSize > 0 {
 		cfg.FetchSize = o.fetchSize
+	}
+	if err := res.vars.add(o.hiveconf, res.vars.hiveconf); err != nil {
+		return nil, fmt.Errorf("--hiveconf: %w", err)
+	}
+	if err := res.vars.add(o.hivevar, res.vars.hivevar); err != nil {
+		return nil, fmt.Errorf("--hivevar: %w", err)
+	}
+	if len(res.vars.hiveconf) > 0 {
+		cfg.SessionConfig = res.vars.hiveconf
 	}
 	if o.verbose {
 		cfg.Logf = func(format string, args ...any) {
@@ -258,6 +341,9 @@ func parseURL(raw string) (*urlOptions, error) {
 	default:
 		return nil, fmt.Errorf("unsupported URL scheme %q (use hive2:// or hive://)", u.Scheme)
 	}
+	if strings.Contains(u.Host, ",") {
+		return nil, fmt.Errorf("multiple hosts in URL are not supported; use a single host:port")
+	}
 	if u.Hostname() == "" {
 		return nil, fmt.Errorf("URL %q has no host", raw)
 	}
@@ -291,35 +377,97 @@ func parseURL(raw string) (*urlOptions, error) {
 		if !ok {
 			continue
 		}
-		switch strings.ToLower(strings.TrimSpace(key)) {
-		case "auth":
-			out.auth = strings.TrimSpace(value)
-		case "user", "username":
-			out.username = strings.TrimSpace(value)
-		case "password":
-			out.password = strings.TrimSpace(value)
-		case "transportmode", "transport.mode":
-			if strings.EqualFold(value, "http") {
-				return nil, fmt.Errorf("HTTP transport is not supported")
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		lowerKey := strings.ToLower(key)
+		switch {
+		case lowerKey == "auth":
+			out.auth = value
+		case lowerKey == "user" || lowerKey == "username":
+			out.username = value
+		case lowerKey == "password":
+			out.password = value
+		case lowerKey == "transportmode" || lowerKey == "transport.mode":
+			if value != "" && !strings.EqualFold(value, "binary") {
+				return nil, fmt.Errorf("transport mode %q is not supported (only binary is implemented)", value)
 			}
-		case "ssl":
+		case lowerKey == "ssl":
 			if strings.EqualFold(value, "true") {
 				return nil, fmt.Errorf("SSL is not supported by this version")
 			}
+		case lowerKey == "servicediscoverymode":
+			if value != "" && !strings.EqualFold(value, "none") {
+				return nil, fmt.Errorf("ZooKeeper service discovery is not supported; connect to a single HiveServer2 host")
+			}
+		case lowerKey == "zookeepernamespace":
+			return nil, fmt.Errorf("ZooKeeper service discovery is not supported; connect to a single HiveServer2 host")
+		case lowerKey == "principal":
+			return nil, fmt.Errorf("Kerberos authentication is not supported by this version")
+		case lowerKey == "httppath":
+			return nil, fmt.Errorf("HTTP transport is not supported by this version")
+		case strings.HasPrefix(lowerKey, "hiveconf:"):
+			out.hiveconf = append(out.hiveconf, key[len("hiveconf:"):]+"="+value)
+		case strings.HasPrefix(lowerKey, "hivevar:"):
+			out.hivevar = append(out.hivevar, key[len("hivevar:"):]+"="+value)
 		}
 	}
 
 	q := u.Query()
-	if v := q.Get("auth"); v != "" {
-		out.auth = v
-	}
-	if v := q.Get("user"); v != "" {
-		out.username = v
-	}
-	if v := q.Get("password"); v != "" {
-		out.password = v
+	for key, values := range q {
+		lowerKey := strings.ToLower(key)
+		value := ""
+		if len(values) > 0 {
+			value = values[len(values)-1]
+		}
+		switch {
+		case lowerKey == "auth":
+			out.auth = value
+		case lowerKey == "user" || lowerKey == "username":
+			out.username = value
+		case lowerKey == "password":
+			out.password = value
+		case lowerKey == "transportmode" || lowerKey == "transport.mode":
+			if value != "" && !strings.EqualFold(value, "binary") {
+				return nil, fmt.Errorf("transport mode %q is not supported (only binary is implemented)", value)
+			}
+		case lowerKey == "ssl":
+			if strings.EqualFold(value, "true") {
+				return nil, fmt.Errorf("SSL is not supported by this version")
+			}
+		case lowerKey == "servicediscoverymode":
+			if value != "" && !strings.EqualFold(value, "none") {
+				return nil, fmt.Errorf("ZooKeeper service discovery is not supported; connect to a single HiveServer2 host")
+			}
+		case lowerKey == "zookeepernamespace":
+			return nil, fmt.Errorf("ZooKeeper service discovery is not supported; connect to a single HiveServer2 host")
+		case lowerKey == "principal":
+			return nil, fmt.Errorf("Kerberos authentication is not supported by this version")
+		case lowerKey == "httppath":
+			return nil, fmt.Errorf("HTTP transport is not supported by this version")
+		case strings.HasPrefix(lowerKey, "hiveconf:"):
+			out.hiveconf = append(out.hiveconf, key[len("hiveconf:"):]+"="+value)
+		case strings.HasPrefix(lowerKey, "hivevar:"):
+			out.hivevar = append(out.hivevar, key[len("hivevar:"):]+"="+value)
+		}
 	}
 	return out, nil
+}
+
+func validateDelimiter(delimiter string) error {
+	if strings.TrimSpace(delimiter) == "" {
+		return fmt.Errorf("delimiter must not be empty")
+	}
+	if strings.ContainsAny(delimiter, " \t\r\n") {
+		return fmt.Errorf("delimiter must not contain whitespace")
+	}
+	switch delimiter[0] {
+	case '\'', '"', '`':
+		return fmt.Errorf("delimiter must not start with a quote character")
+	}
+	if delimiter == "--" || strings.HasPrefix(delimiter, "/*") {
+		return fmt.Errorf("delimiter %q conflicts with SQL comments", delimiter)
+	}
+	return nil
 }
 
 func promptPassword() (string, error) {

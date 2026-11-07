@@ -1,15 +1,45 @@
-// Package sqlsplit splits a SQL script into statements on semicolons that are
-// outside string literals, quoted identifiers and comments.
+// Package sqlsplit splits a SQL script into statements on a configurable
+// terminator that is outside string literals, quoted identifiers and comments.
 package sqlsplit
 
 import "strings"
 
-// Split returns the statements in script. A trailing statement without a
-// semicolon is returned as-is. Statements consisting only of whitespace and
-// comments are dropped.
+// Split returns the statements in script, using ";" as the terminator.
 func Split(script string) []string {
-	var out []string
-	var buf strings.Builder
+	return SplitWith(script, ";")
+}
+
+// SplitWith returns the statements in script. A trailing statement without a
+// terminator is returned as-is. Statements consisting only of whitespace and
+// comments are dropped. An empty delimiter is treated as ";".
+func SplitWith(script, delimiter string) []string {
+	return scan(script, delimiter).statements
+}
+
+// Complete reports whether script ends with a statement terminator (";")
+// outside strings and comments.
+func Complete(script string) bool {
+	return CompleteWith(script, ";")
+}
+
+// CompleteWith reports whether script ends with delimiter outside strings and
+// comments.
+func CompleteWith(script, delimiter string) bool {
+	if strings.TrimSpace(script) == "" {
+		return false
+	}
+	return scan(script, delimiter).complete
+}
+
+type scanResult struct {
+	statements []string
+	complete   bool
+}
+
+func scan(script, delimiter string) scanResult {
+	if delimiter == "" {
+		delimiter = ";"
+	}
 
 	const (
 		normal = iota
@@ -19,14 +49,18 @@ func Split(script string) []string {
 		lineComment
 		blockComment
 	)
+
+	var res scanResult
+	var buf strings.Builder
 	state := normal
 	escaped := false
+	lastDelimiter := false
 
 	flush := func() {
 		stmt := strings.TrimSpace(buf.String())
 		buf.Reset()
 		if stmt != "" && hasCode(stmt) {
-			out = append(out, stmt)
+			res.statements = append(res.statements, stmt)
 		}
 	}
 
@@ -34,15 +68,24 @@ func Split(script string) []string {
 		c := script[i]
 		switch state {
 		case normal:
+			if strings.HasPrefix(script[i:], delimiter) {
+				flush()
+				lastDelimiter = true
+				i += len(delimiter) - 1
+				continue
+			}
 			switch c {
 			case '\'':
 				state = singleQuote
+				lastDelimiter = false
 				buf.WriteByte(c)
 			case '"':
 				state = doubleQuote
+				lastDelimiter = false
 				buf.WriteByte(c)
 			case '`':
 				state = backtick
+				lastDelimiter = false
 				buf.WriteByte(c)
 			case '-':
 				if i+1 < len(script) && script[i+1] == '-' {
@@ -50,6 +93,7 @@ func Split(script string) []string {
 					buf.WriteString("--")
 					i++
 				} else {
+					lastDelimiter = false
 					buf.WriteByte(c)
 				}
 			case '/':
@@ -58,11 +102,13 @@ func Split(script string) []string {
 					buf.WriteString("/*")
 					i++
 				} else {
+					lastDelimiter = false
 					buf.WriteByte(c)
 				}
-			case ';':
-				flush()
 			default:
+				if !isSpace(c) {
+					lastDelimiter = false
+				}
 				buf.WriteByte(c)
 			}
 
@@ -121,131 +167,9 @@ func Split(script string) []string {
 		}
 	}
 
-	stmt := strings.TrimSpace(buf.String())
-	if stmt != "" && hasCode(stmt) {
-		out = append(out, stmt)
-	}
-	return out
-}
-
-// Complete reports whether script ends with a statement terminator outside
-// strings and comments.
-func Complete(script string) bool {
-	if strings.TrimSpace(script) == "" {
-		return false
-	}
-	const (
-		normal = iota
-		singleQuote
-		doubleQuote
-		backtick
-		lineComment
-		blockComment
-	)
-	state := normal
-	escaped := false
-	var last byte
-	for i := 0; i < len(script); i++ {
-		c := script[i]
-		switch state {
-		case normal:
-			switch c {
-			case '\'':
-				state = singleQuote
-				last = c
-			case '"':
-				state = doubleQuote
-				last = c
-			case '`':
-				state = backtick
-				last = c
-			case '-':
-				if i+1 < len(script) && script[i+1] == '-' {
-					state = lineComment
-					i++
-				} else {
-					last = c
-				}
-			case '/':
-				if i+1 < len(script) && script[i+1] == '*' {
-					state = blockComment
-					i++
-				} else {
-					last = c
-				}
-			case ';':
-				last = c
-			default:
-				if !isSpace(c) {
-					last = c
-				}
-			}
-		case singleQuote, doubleQuote, backtick:
-			if escaped {
-				escaped = false
-				last = c
-				continue
-			}
-			switch c {
-			case '\\':
-				escaped = true
-				last = c
-			case '\'':
-				if state == singleQuote {
-					if i+1 < len(script) && script[i+1] == '\'' {
-						i++
-						last = c
-					} else {
-						state = normal
-						last = c
-					}
-				} else {
-					last = c
-				}
-			case '"':
-				if state == doubleQuote {
-					if i+1 < len(script) && script[i+1] == '"' {
-						i++
-						last = c
-					} else {
-						state = normal
-						last = c
-					}
-				} else {
-					last = c
-				}
-			case '`':
-				if state == backtick {
-					if i+1 < len(script) && script[i+1] == '`' {
-						i++
-						last = c
-					} else {
-						state = normal
-						last = c
-					}
-				} else {
-					last = c
-				}
-			default:
-				last = c
-			}
-		case lineComment:
-			if c == '\n' {
-				state = normal
-			}
-		case blockComment:
-			if c == '*' && i+1 < len(script) && script[i+1] == '/' {
-				i++
-				state = normal
-			}
-		}
-	}
-	switch state {
-	case normal, lineComment:
-		return last == ';'
-	default:
-		return false
-	}
+	flush()
+	res.complete = (state == normal || state == lineComment) && lastDelimiter
+	return res
 }
 
 func isSpace(c byte) bool {

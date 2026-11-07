@@ -242,6 +242,18 @@ run_golden basic_tsv \
   "hive_cmd --output-format tsv -e \"SELECT 1 AS x, 'a' AS s, true AS b, NULL AS n\""
 run_golden basic_json \
   "hive_cmd --output-format json -e \"SELECT 1 AS x, 'a' AS s, true AS b, NULL AS n\""
+run_golden jsonl_output \
+  "hive_cmd --output-format jsonl -e \"SELECT 1 AS id, '中文' AS s, CAST(NULL AS STRING) AS n, unhex('4142') AS b\""
+run_golden wide_chars \
+  "hive_cmd -e \"SELECT 17 AS id, '中文😀' AS s, 3.14 AS d\""
+run_golden max_column_width \
+  "hive_cmd --max-column-width 8 -e \"SELECT '中文字符串abc' AS s, 123456789 AS n\""
+run_golden null_empty \
+  "hive_cmd --null-empty -e \"SELECT CAST(NULL AS STRING) AS n\""
+run_golden binary_hex \
+  "hive_cmd --binary-format hex -e \"SELECT unhex('4142') AS b\""
+run_golden binary_text \
+  "hive_cmd --binary-format text -e \"SELECT unhex('4142') AS b\""
 
 TYPE_QUERY="SELECT CAST(1 AS TINYINT) AS ti, CAST(2 AS SMALLINT) AS si, CAST(3 AS INT) AS i, CAST(4 AS BIGINT) AS bi, CAST(5.5 AS FLOAT) AS f, CAST(6.25 AS DOUBLE) AS d, CAST(7.125 AS DECIMAL(10,3)) AS decv, CAST('2024-01-02' AS DATE) AS dt, CAST('2024-01-02 03:04:05' AS TIMESTAMP) AS ts, CAST('abc' AS CHAR(5)) AS ch, CAST('abcdef' AS VARCHAR(4)) AS vc, array('a','b') AS arr, map('k', 1) AS m, named_struct('x', 1, 'y', 'z') AS st, CAST('bin' AS BINARY) AS binv"
 run_golden types_table "hive_cmd -e \"$TYPE_QUERY\""
@@ -256,6 +268,31 @@ SELECT 2 AS b
 SQL
 run_golden multi_script "hive_cmd -f '$ARTIFACTS/sql/multi.sql'"
 
+cat > "$ARTIFACTS/sql/vars.sql" <<'SQL'
+SELECT '${hivevar:name}' AS v, '${hiveconf:custom.flag}' AS c;
+SELECT '\${hivevar:name}' AS escaped;
+SET custom.flag;
+SQL
+run_golden vars_hiveconf \
+  "hive_cmd --hivevar name=world --hiveconf custom.flag=a,b -f '$ARTIFACTS/sql/vars.sql'"
+
+cat > "$ARTIFACTS/sql/vars_undefined.sql" <<'SQL'
+SELECT '${hivevar:missing}' AS v;
+SQL
+if run_case vars_undefined 2 "hive_cmd -f '$ARTIFACTS/sql/vars_undefined.sql'"; then
+  if grep -q 'undefined variable' "$ARTIFACTS/cases/vars_undefined/stderr"; then
+    record vars_undefined PASS 2
+  else
+    record vars_undefined FAIL 2
+  fi
+fi
+
+cat > "$ARTIFACTS/sql/delimiter.sql" <<'SQL'
+SELECT 'a;;b' AS s;;
+SELECT 2 AS n;;
+SQL
+run_golden delimiter_string "hive_cmd --delimiter ';;' -f '$ARTIFACTS/sql/delimiter.sql'"
+
 run_golden ddl_types \
   "hive_cmd -d '$DB' --fetch-size 7 -e 'SELECT id, s, d FROM e2e_types ORDER BY id'"
 
@@ -263,6 +300,39 @@ run_case meta_commands 0 \
   "printf '!set outputformat csv\n!tables\n!columns e2e_types\n!quit\n' | hive_cmd -d '$DB'"
 if [ -f "$ARTIFACTS/cases/meta_commands/exit" ] && [ "$(cat "$ARTIFACTS/cases/meta_commands/exit")" = 0 ]; then
   golden_check meta_commands
+fi
+
+printf 'select 1;\n' > "$ARTIFACTS/history"
+echo "SELECT 300 AS run_value;" > "$ARTIFACTS/sql/run.sql"
+cat > "$ARTIFACTS/sql/meta_new.in" <<EOF
+!dbinfo
+!describe e2e_types
+!source $ARTIFACTS/sql/run.sql
+!outputformat jsonl
+SELECT 1 AS x;
+!record $ARTIFACTS/record.txt
+SELECT 2 AS r;
+!record off
+!history
+!quit
+EOF
+run_case meta_new 0 \
+  "cat '$ARTIFACTS/sql/meta_new.in' | hive_cmd -d '$DB' --history-file '$ARTIFACTS/history'"
+if [ "$(cat "$ARTIFACTS/cases/meta_new/exit" 2>/dev/null)" = 0 ]; then
+  mdir="$ARTIFACTS/cases/meta_new"
+  if grep -q 'version = ' "$mdir/stderr" &&
+     grep -q 'protocol = V' "$mdir/stderr" &&
+     grep -q 'select 1;' "$mdir/stderr" &&
+     grep -q 'run_value' "$mdir/stdout" &&
+     grep -q '^| id' "$mdir/stdout" &&
+     grep -q '{"x": 1}' "$mdir/stdout" &&
+     grep -q '{"r": 2}' "$mdir/stdout" &&
+     grep -q '{"r": 2}' "$ARTIFACTS/record.txt" &&
+     ! grep -q '{"x": 1}' "$ARTIFACTS/record.txt"; then
+    record meta_new PASS 0
+  else
+    record meta_new FAIL 0
+  fi
 fi
 
 # 5000 rows at fetch-size 7; the array is generated locally.
@@ -282,6 +352,25 @@ if [ -f "$ARTIFACTS/cases/paging/exit" ] && [ "$(cat "$ARTIFACTS/cases/paging/ex
   fi
 fi
 
+# Streaming tables cannot know the final widths up front. With 1100 rows the
+# 4-digit values appear after the first block, so the client must widen the
+# column instead of truncating values.
+run_case stream_reblock 0 \
+  "hive_cmd --stream --fetch-size 7 -e \"SELECT explode(array(\$(seq -s, 0 1099))) AS n\""
+if [ "$(cat "$ARTIFACTS/cases/stream_reblock/exit" 2>/dev/null)" = 0 ]; then
+  sdir="$ARTIFACTS/cases/stream_reblock"
+  rows=$(grep -c '^|' "$sdir/stdout")
+  headers=$(grep -c '^| n' "$sdir/stdout")
+  data=$((rows - headers))
+  last=$(grep '^|' "$sdir/stdout" | grep -v '^| n' | tail -1 | tr -d ' |')
+  if [ "$data" = 1100 ] && [ "$last" = 1099 ] && ! grep -q '…' "$sdir/stdout"; then
+    record stream_reblock PASS 0
+  else
+    printf 'stream mismatch: data=%s last=%s headers=%s\n' "$data" "$last" "$headers" >> "$sdir/failure"
+    record stream_reblock FAIL 0
+  fi
+fi
+
 run_case error_table 1 "hive_cmd -e 'SELECT * FROM no_such_table_e2e'"
 if [ "$(cat "$ARTIFACTS/cases/error_table/exit" 2>/dev/null)" = 1 ]; then
   if grep -q 'Table not found' "$ARTIFACTS/cases/error_table/stderr" &&
@@ -298,6 +387,57 @@ if [ "$(cat "$ARTIFACTS/cases/error_flag/exit" 2>/dev/null)" = 2 ] &&
   record error_flag PASS 2
 else
   record error_flag FAIL 2
+fi
+
+cat > "$ARTIFACTS/sql/init.sql" <<'SQL'
+SELECT 100 AS init_value;;
+SQL
+cat > "$ARTIFACTS/sql/force.sql" <<'SQL'
+SELECT * FROM no_such_table_e2e;; SELECT 200 AS good_value;;
+SQL
+run_case init_force_delimiter 1 \
+  "hive_cmd -i '$ARTIFACTS/sql/init.sql' --delimiter ';;' --force -f '$ARTIFACTS/sql/force.sql'"
+if [ "$(cat "$ARTIFACTS/cases/init_force_delimiter/exit" 2>/dev/null)" = 1 ]; then
+  idir="$ARTIFACTS/cases/init_force_delimiter"
+  if grep -q 'init_value' "$idir/stdout" &&
+     grep -q 'good_value' "$idir/stdout" &&
+     grep -q 'Table not found' "$idir/stderr"; then
+    record init_force_delimiter PASS 1
+  else
+    record init_force_delimiter FAIL 1
+  fi
+fi
+
+url_error_case() {
+  local name=$1 url=$2 want=$3
+  if run_case "$name" 2 "'$BIN' -u '$url' -n '$USER' --auth '$AUTH' -e 'SELECT 1'"; then
+    if grep -q "$want" "$ARTIFACTS/cases/$name/stderr"; then
+      record "$name" PASS 2
+    else
+      record "$name" FAIL 2
+    fi
+  fi
+}
+
+url_error_case url_zk \
+  "jdbc:hive2://$HOST:$PORT/default;serviceDiscoveryMode=zooKeeper;zooKeeperNamespace=hiveserver2" \
+  "ZooKeeper service discovery"
+url_error_case url_ssl "hive2://$HOST:$PORT/default;ssl=true" "SSL is not supported"
+url_error_case url_http "hive2://$HOST:$PORT/default;transportMode=http" "transport mode"
+url_error_case url_principal "hive2://$HOST:$PORT/default;principal=hive/_HOST@EXAMPLE.COM" "Kerberos"
+url_error_case url_multihost "hive2://$HOST,$HOST:$PORT/default" "multiple hosts"
+
+printf 'ignored\n' > "$ARTIFACTS/pw"
+chmod 600 "$ARTIFACTS/pw"
+if run_case password_file 0 "hive_cmd -w '$ARTIFACTS/pw' -e 'SELECT 1 AS x'"; then
+  record password_file PASS 0
+fi
+if run_case password_conflict 2 "hive_cmd -p x -w '$ARTIFACTS/pw' -e 'SELECT 1'"; then
+  if grep -q 'mutually exclusive' "$ARTIFACTS/cases/password_conflict/stderr"; then
+    record password_conflict PASS 2
+  else
+    record password_conflict FAIL 2
+  fi
 fi
 
 mkdir -p "$ARTIFACTS/hive-site"
