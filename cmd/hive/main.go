@@ -73,6 +73,7 @@ type cliOptions struct {
 
 	historyFile string
 	noHistory   bool
+	color       string
 
 	showVersion bool
 	showHelp    bool
@@ -227,6 +228,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	queryTimeout := set.IntLong("query-timeout", 0, 0, "query timeout seconds")
 	historyFile := set.StringLong("history-file", 0, "", "history file")
 	noHistory := set.BoolLong("no-history", 0, "disable history")
+	color := set.StringLong("color", 0, "auto", "REPL syntax highlighting: auto, always or never")
 	help := set.BoolLong("help", 'h', "print help")
 	showVersion := set.BoolLong("version", 'v', "print version")
 
@@ -270,6 +272,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	o.queryTimeout = *queryTimeout
 	o.historyFile = *historyFile
 	o.noHistory = *noHistory
+	o.color = *color
 	o.showHelp = *help
 	o.showVersion = *showVersion
 	return o, nil

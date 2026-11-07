@@ -34,6 +34,7 @@ type resolvedOptions struct {
 
 	historyFile string
 	noHistory   bool
+	highlight   bool
 
 	vars *variables
 }
@@ -101,6 +102,11 @@ func resolveOptions(o *cliOptions) (*resolvedOptions, error) {
 		nullString = ""
 	}
 
+	highlight, err := resolveHighlight(o.color)
+	if err != nil {
+		return nil, err
+	}
+
 	res := &resolvedOptions{
 		execute:        o.execute,
 		file:           o.file,
@@ -118,6 +124,7 @@ func resolveOptions(o *cliOptions) (*resolvedOptions, error) {
 		binaryFormat:   binaryFormat,
 		noHistory:      o.noHistory,
 		historyFile:    o.historyFile,
+		highlight:      highlight,
 		vars:           newVariables(),
 	}
 	switch res.format {
@@ -468,6 +475,27 @@ func validateDelimiter(delimiter string) error {
 		return fmt.Errorf("delimiter %q conflicts with SQL comments", delimiter)
 	}
 	return nil
+}
+
+// resolveHighlight decides whether the REPL emits ANSI color escapes. "auto"
+// honors NO_COLOR and TERM=dumb and requires a terminal on both ends.
+func resolveHighlight(mode string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "auto":
+		if os.Getenv("NO_COLOR") != "" {
+			return false, nil
+		}
+		if strings.EqualFold(os.Getenv("TERM"), "dumb") {
+			return false, nil
+		}
+		return isTerminal(os.Stdin) && isTerminal(os.Stdout), nil
+	case "always", "on", "yes":
+		return true, nil
+	case "never", "off", "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unsupported color mode %q (use auto, always or never)", mode)
+	}
 }
 
 func promptPassword() (string, error) {

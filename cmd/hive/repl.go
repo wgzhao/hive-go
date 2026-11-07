@@ -34,6 +34,7 @@ type replState struct {
 	record      *os.File
 	runDepth    int
 	scriptForce bool
+	highlight   bool
 	sigCh       <-chan os.Signal
 }
 
@@ -51,6 +52,7 @@ func newReplState(client *hive.Client, opts *resolvedOptions) *replState {
 		fetchSize:  opts.cfg.FetchSize,
 		delimiter:  opts.delimiter,
 		vars:       opts.vars,
+		highlight:  opts.highlight,
 		out:        os.Stdout,
 	}
 	if state.currentDB == "" {
@@ -68,13 +70,19 @@ func runREPL(ctx context.Context, state *replState) int {
 			_ = os.MkdirAll(dir, 0700)
 		}
 	}
-	rl, err := readline.NewEx(&readline.Config{
+	var pending strings.Builder
+
+	rlConfig := &readline.Config{
 		Prompt:            state.prompt(),
 		HistoryFile:       opts.historyFile,
 		HistorySearchFold: true,
 		InterruptPrompt:   "^C",
 		EOFPrompt:         "exit",
-	})
+	}
+	if state.highlight {
+		rlConfig.Painter = &sqlPainter{pending: func() string { return pending.String() }}
+	}
+	rl, err := readline.NewEx(rlConfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: initialize readline: %v\n", err)
 		return 1
@@ -87,7 +95,6 @@ func runREPL(ctx context.Context, state *replState) int {
 	defer signal.Stop(sigCh)
 	state.sigCh = sigCh
 
-	var pending strings.Builder
 	for {
 		prompt := state.prompt()
 		if pending.Len() > 0 {
