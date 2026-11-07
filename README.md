@@ -136,10 +136,12 @@ Beeline for the common case: connect to HiveServer2, run SQL, read results.
 
 ## Status
 
-**v0.1.0 is the first public preview.** The client is functional and verified,
-but the project is pre-1.0: CLI flags and the Go API may change, and it has not
-been hardened for every production environment. See the
-[changelog](CHANGELOG.md) for release contents.
+**v0.2.0 is the current release.** It adds script variables and session
+properties, init/force/delimiter scripting, streaming and JSONL output, and the
+most-used REPL commands. The client is functional and verified, but the project
+is pre-1.0: CLI flags and the Go API may change, and it has not been hardened
+for every production environment. See the [changelog](CHANGELOG.md) for release
+contents.
 
 Verified end-to-end against a real HiveServer2:
 

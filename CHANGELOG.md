@@ -5,6 +5,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-07
+
 ### Added
 
 - `--hiveconf K=V` session properties and `--hivevar K=V` client variables,
@@ -28,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `binaryformat`.
 - E2E coverage for variables, init/force/delimiter scripts, streaming tables,
   URL rejection, password files, new formats and the new REPL commands.
+
+### Changed
+
+- BINARY values now render as base64 by default in table, CSV, and TSV output;
+  use `--binary-format` to select text, base64, or hex. JSON already used base64.
+- Empty JSON result sets render as `[]`.
+- Table and vertical column widths use a fixed display width so output is
+  locale-independent; CJK and emoji now align correctly.
 
 ## [0.1.0] - 2026-11-06
 
@@ -97,5 +107,6 @@ go install github.com/wgzhao/hive-go/cmd/hive@v0.1.0
 Prebuilt archives for Linux, macOS, and Windows (`amd64` and `arm64`) are
 attached to the release, together with `checksums.txt`.
 
-[Unreleased]: https://github.com/wgzhao/hive-go/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/wgzhao/hive-go/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/wgzhao/hive-go/releases/tag/v0.2.0
 [0.1.0]: https://github.com/wgzhao/hive-go/releases/tag/v0.1.0
