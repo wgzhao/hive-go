@@ -50,6 +50,8 @@ Output options:
 REPL options:
       --history-file FILE   history file (default: ~/.hive-go_history)
       --no-history          disable history
+      --color MODE          SQL syntax highlighting: auto, always or never
+                            (default: auto; NO_COLOR disables it)
 
 Other:
   -h, --help                print this help and exit
@@ -58,7 +60,7 @@ Other:
 Environment:
   HIVE_SERVER2_URL, HIVE_HOST, HIVE_PORT, HIVE_DATABASE, HIVE_USER,
   HIVE_PASSWORD, HIVE_AUTH, HIVE_PROTOCOL, HIVE_FETCH_SIZE,
-  HIVE_CONF_DIR, HIVE_HOME
+  HIVE_CONF_DIR, HIVE_HOME, NO_COLOR
 
 Exit codes:
   0 success, 1 SQL/connection error, 2 usage error, 130 interrupted

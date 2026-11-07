@@ -267,6 +267,10 @@ hive ... --binary-format hex         # text, base64 (default) or hex
 
 Prompt: `hive (database)> `; continuation lines use `      -> `.
 History defaults to `~/.hive-go_history` (use `--no-history` to disable).
+SQL input is syntax-highlighted using the Hive 3.1/4.0 keyword set. Coloring is
+enabled automatically on a terminal (disable with `--color=never` or
+`NO_COLOR=1`); meta commands (`!...`) are highlighted too. Highlighting never
+affects batch output, the history file, or the SQL sent to the server.
 
 Meta commands:
 
