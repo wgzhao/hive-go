@@ -14,61 +14,107 @@ import (
 	"github.com/wgzhao/hive-go/internal/sqlsplit"
 )
 
-// runStream executes a script from -e, -f or non-TTY stdin. It supports SQL
-// statements terminated by semicolons plus REPL-style "!" meta commands.
-func runStream(ctx context.Context, client *hive.Client, script string, opts *resolvedOptions) error {
-	state := newReplState(client, opts)
+// errScriptFailed reports that --force continued past one or more errors.
+// Individual errors have already been printed.
+var errScriptFailed = errors.New("one or more statements failed")
+
+// runScript executes a script from -e, -f, stdin, an init file or !run. It
+// supports SQL statements terminated by the configured delimiter plus
+// REPL-style "!" meta commands.
+func (s *replState) runScript(ctx context.Context, script string, force bool) error {
+	previousForce := s.scriptForce
+	s.scriptForce = force
+	defer func() { s.scriptForce = previousForce }()
+
 	var pending strings.Builder
 	scanner := bufio.NewScanner(strings.NewReader(script))
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	executed := false
+	failed := false
+
+	handleError := func(err error) (fatal bool) {
+		if errors.Is(err, hive.ErrCanceled) || errors.Is(err, context.Canceled) {
+			return true
+		}
+		var ve *variableError
+		if errors.As(err, &ve) {
+			return true
+		}
+		if errors.Is(err, errScriptFailed) {
+			failed = true
+			return false
+		}
+		if !force {
+			return true
+		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		failed = true
+		return false
+	}
 
 	for scanner.Scan() {
-		line := scanner.Text()
+		line, err := s.vars.expand(scanner.Text())
+		if err != nil {
+			return err
+		}
 		trimmed := strings.TrimSpace(line)
 		if pending.Len() == 0 && trimmed == "" {
 			continue
 		}
 		if pending.Len() == 0 && strings.HasPrefix(trimmed, "!") {
-			quit, err := state.handleMeta(ctx, trimmed)
-			if err != nil {
-				return err
-			}
 			executed = true
+			quit, err := s.handleMeta(ctx, trimmed)
+			if err != nil {
+				if handleError(err) {
+					return err
+				}
+				continue
+			}
 			if quit {
-				return nil
+				return failedOrNil(failed)
 			}
 			continue
 		}
 		pending.WriteString(line)
 		pending.WriteByte('\n')
-		if !sqlsplit.Complete(pending.String()) {
+		if !sqlsplit.CompleteWith(pending.String(), s.delimiter) {
 			continue
 		}
 		statement := pending.String()
 		pending.Reset()
-		if err := state.executeStatements(ctx, nil, statement); err != nil {
+		executed = true
+		subFailed, err := s.executeScriptStatements(ctx, statement, force)
+		failed = failed || subFailed
+		if err != nil {
 			return err
 		}
-		executed = true
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("read script: %w", err)
 	}
 	if strings.TrimSpace(pending.String()) != "" {
-		if err := state.executeStatements(ctx, nil, pending.String()); err != nil {
+		executed = true
+		subFailed, err := s.executeScriptStatements(ctx, pending.String(), force)
+		failed = failed || subFailed
+		if err != nil {
 			return err
 		}
-		executed = true
 	}
-	if !executed && !opts.silent {
+	if !executed && !s.silent {
 		fmt.Fprintln(os.Stderr, "No statements to execute")
+	}
+	return failedOrNil(failed)
+}
+
+func failedOrNil(failed bool) error {
+	if failed {
+		return errScriptFailed
 	}
 	return nil
 }
 
 // runStatement executes one statement and writes its result set.
-func runStatement(ctx context.Context, client *hive.Client, statement string, opts *resolvedOptions) (int, error) {
+func runStatement(ctx context.Context, client *hive.Client, statement string, opts *resolvedOptions, out io.Writer) (int, error) {
 	start := time.Now()
 	result, err := client.Execute(ctx, statement)
 	if err != nil {
@@ -79,7 +125,7 @@ func runStatement(ctx context.Context, client *hive.Client, statement string, op
 	rows := 0
 	columns := result.Columns()
 	if len(columns) > 0 {
-		writer := newResultWriter(opts, os.Stdout)
+		writer := newResultWriter(opts, out)
 		if err := writer.WriteHeader(columns); err != nil {
 			return 0, err
 		}

@@ -107,8 +107,13 @@ accidental Go version bump.
   error, 130 interrupted.
 - `-e` and `-f` are mutually exclusive. `-f -` reads stdin.
 - Non-TTY stdin is treated as a script; it supports SQL and `!` meta commands.
-- `--output-format`: table, vertical, csv, tsv, json. `--null-string` and
-  `--no-header` apply to the tabular formats and CSV/TSV.
+- `--output-format`: table, vertical, csv, tsv, json, jsonl. `--null-string`,
+  `--null-empty` and `--no-header` apply to the tabular formats and CSV/TSV.
+  `--max-column-width` applies only to table/vertical; `--binary-format`
+  controls how BINARY values are rendered in every format.
+- `--hiveconf K=V` sets session configuration; `--hivevar K=V` defines client
+  variables used by `${hivevar:...}`, `${hiveconf:...}`, `${env:...}` and
+  `${system:...}` substitution. Undefined variables are an error.
 - The REPL uses `github.com/chzyer/readline`; batch/stream mode uses a plain
   line scanner.
 

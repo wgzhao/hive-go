@@ -5,6 +5,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--hiveconf K=V` session properties and `--hivevar K=V` client variables,
+  with `${hivevar:...}`, `${hiveconf:...}`, `${env:...}` and `${system:...}`
+  substitution in scripts and meta commands. Undefined variables are an error;
+  `\${...}` escapes a reference.
+- `-i/--init-file` for a startup script, `--force` to continue after statement
+  errors, and `--delimiter` for multi-character statement terminators.
+- `-w/--password-file`, with a warning when the file is accessible by other
+  users.
+- `;hiveconf:` and `;hivevar:` JDBC URL parameters. Unsupported options such as
+  `serviceDiscoveryMode=zooKeeper`, `ssl=true`, `transportMode=http` and
+  `principal=...` now fail with an explicit message instead of being ignored.
+- `jsonl` output and incremental JSON/JSONL writing.
+- `--stream` table output with re-blocking when later rows are wider, so values
+  are never silently truncated.
+- `--max-column-width`, `--null-empty` and `--binary-format text|base64|hex`.
+- Display-width-aware table and vertical formatting for CJK and emoji.
+- REPL commands: `!describe`, `!outputformat`, `!delimiter`, `!run`/`!source`,
+  `!history`, `!record` and `!dbinfo`; `!set` gained `delimiter` and
+  `binaryformat`.
+- E2E coverage for variables, init/force/delimiter scripts, streaming tables,
+  URL rejection, password files, new formats and the new REPL commands.
+
 ## [0.1.0] - 2026-11-06
 
 The first public preview. `hive-go` is functional and verified against real

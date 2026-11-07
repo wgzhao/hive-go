@@ -27,6 +27,14 @@ type replState struct {
 	timing     bool
 	silent     bool
 	fetchSize  int
+
+	delimiter   string
+	vars        *variables
+	out         io.Writer
+	record      *os.File
+	runDepth    int
+	scriptForce bool
+	sigCh       <-chan os.Signal
 }
 
 func newReplState(client *hive.Client, opts *resolvedOptions) *replState {
@@ -41,6 +49,9 @@ func newReplState(client *hive.Client, opts *resolvedOptions) *replState {
 		timing:     opts.timing,
 		silent:     opts.silent,
 		fetchSize:  opts.cfg.FetchSize,
+		delimiter:  opts.delimiter,
+		vars:       opts.vars,
+		out:        os.Stdout,
 	}
 	if state.currentDB == "" {
 		state.currentDB = "default"
@@ -49,8 +60,8 @@ func newReplState(client *hive.Client, opts *resolvedOptions) *replState {
 	return state
 }
 
-func runREPL(ctx context.Context, client *hive.Client, opts *resolvedOptions) int {
-	state := newReplState(client, opts)
+func runREPL(ctx context.Context, state *replState) int {
+	opts := state.opts
 
 	if opts.historyFile != "" {
 		if dir := filepath.Dir(opts.historyFile); dir != "" && dir != "." {
@@ -69,10 +80,12 @@ func runREPL(ctx context.Context, client *hive.Client, opts *resolvedOptions) in
 		return 1
 	}
 	defer rl.Close()
+	defer state.stopRecording()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
 	defer signal.Stop(sigCh)
+	state.sigCh = sigCh
 
 	var pending strings.Builder
 	for {
@@ -88,7 +101,7 @@ func runREPL(ctx context.Context, client *hive.Client, opts *resolvedOptions) in
 		}
 		if errors.Is(err, io.EOF) {
 			if strings.TrimSpace(pending.String()) != "" {
-				if err := state.executeScript(ctx, sigCh, pending.String()); err != nil {
+				if err := state.executeScript(ctx, pending.String()); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				}
 			}
@@ -97,6 +110,12 @@ func runREPL(ctx context.Context, client *hive.Client, opts *resolvedOptions) in
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return 1
+		}
+
+		line, err = state.vars.expand(line)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			continue
 		}
 
 		trimmed := strings.TrimSpace(line)
@@ -117,12 +136,12 @@ func runREPL(ctx context.Context, client *hive.Client, opts *resolvedOptions) in
 
 		pending.WriteString(line)
 		pending.WriteByte('\n')
-		if !sqlsplit.Complete(pending.String()) {
+		if !sqlsplit.CompleteWith(pending.String(), state.delimiter) {
 			continue
 		}
 		script := pending.String()
 		pending.Reset()
-		if err := state.executeScript(ctx, sigCh, script); err != nil {
+		if err := state.executeScript(ctx, script); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
 	}
@@ -140,11 +159,12 @@ func (s *replState) snapshot() *resolvedOptions {
 	opts.verbose = s.verbose
 	opts.timing = s.timing
 	opts.silent = s.silent
+	opts.delimiter = s.delimiter
 	return &opts
 }
 
-func (s *replState) executeScript(ctx context.Context, sigCh <-chan os.Signal, script string) error {
-	err := s.executeStatements(ctx, sigCh, script)
+func (s *replState) executeScript(ctx context.Context, script string) error {
+	err := s.executeStatements(ctx, script)
 	if errors.Is(err, hive.ErrCanceled) || errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, "Query canceled")
 		return nil
@@ -152,38 +172,78 @@ func (s *replState) executeScript(ctx context.Context, sigCh <-chan os.Signal, s
 	return err
 }
 
-func (s *replState) executeStatements(ctx context.Context, sigCh <-chan os.Signal, script string) error {
-	statements := sqlsplit.Split(script)
-	for _, statement := range statements {
-		if s.verbose {
-			fmt.Fprintf(os.Stderr, "-- statement: %s\n", oneLine(statement))
-		}
-		queryCtx, cancel := context.WithCancel(ctx)
-		stop := make(chan struct{})
-		if sigCh != nil {
-			go func() {
-				select {
-				case <-sigCh:
-					cancel()
-				case <-stop:
-				}
-			}()
-		}
-
-		s.client.SetFetchSize(s.fetchSize)
-		_, err := runStatement(queryCtx, s.client, statement, s.snapshot())
-		close(stop)
-		cancel()
-
-		if err != nil {
+func (s *replState) executeStatements(ctx context.Context, script string) error {
+	for _, statement := range sqlsplit.SplitWith(script, s.delimiter) {
+		if err := s.executeOne(ctx, statement); err != nil {
 			if errors.Is(err, hive.ErrCanceled) || errors.Is(err, context.Canceled) {
 				return hive.ErrCanceled
 			}
 			return err
 		}
-		if database, ok := parseUse(statement); ok {
-			s.currentDB = database
-		}
 	}
 	return nil
+}
+
+// executeOne runs a single statement and updates the prompt database.
+func (s *replState) executeOne(ctx context.Context, statement string) error {
+	if s.verbose {
+		fmt.Fprintf(os.Stderr, "-- statement: %s\n", oneLine(statement))
+	}
+	if err := s.runQuery(ctx, statement); err != nil {
+		return err
+	}
+	if database, ok := parseUse(statement); ok {
+		s.currentDB = database
+	}
+	return nil
+}
+
+// executeScriptStatements runs every statement in script and, when force is
+// set, continues past errors. It reports whether any statement failed.
+func (s *replState) executeScriptStatements(ctx context.Context, script string, force bool) (bool, error) {
+	failed := false
+	for _, statement := range sqlsplit.SplitWith(script, s.delimiter) {
+		err := s.executeOne(ctx, statement)
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, hive.ErrCanceled) || errors.Is(err, context.Canceled) {
+			return failed, err
+		}
+		if !force {
+			return failed, err
+		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		failed = true
+	}
+	return failed, nil
+}
+
+func (s *replState) runQuery(ctx context.Context, statement string) error {
+	queryCtx, cancel := context.WithCancel(ctx)
+	stop := make(chan struct{})
+	if s.sigCh != nil {
+		go func() {
+			select {
+			case <-s.sigCh:
+				cancel()
+			case <-stop:
+			}
+		}()
+	}
+
+	s.client.SetFetchSize(s.fetchSize)
+	_, err := runStatement(queryCtx, s.client, statement, s.snapshot(), s.out)
+	close(stop)
+	cancel()
+	return err
+}
+
+func (s *replState) stopRecording() {
+	if s.record == nil {
+		return
+	}
+	_ = s.record.Close()
+	s.record = nil
+	s.out = os.Stdout
 }

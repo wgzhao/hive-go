@@ -47,7 +47,7 @@ vertical blocks, CSV, TSV, or JSON.
 - **Speaks HiveServer2 natively.** Thrift `TCLIService` over binary protocol,
   SASL PLAIN (`NONE`/`LDAP`), `NOSASL`, and protocol V10 or V6.
 - **Script-friendly by design.** Result data goes to stdout, diagnostics to
-  stderr, with stable exit codes and five output formats.
+  stderr, with stable exit codes and six output formats.
 - **A REPL you can live in.** History, `!` meta commands, multiple statements,
   and Ctrl-C query cancellation that keeps the session usable.
 - **Fits an existing cluster.** Reads `hive-site.xml` and `HIVE_*` environment
@@ -151,6 +151,8 @@ Verified end-to-end against a real HiveServer2:
 - 5000-row result sets at `--fetch-size 7`
 - NULL bitmaps, Unicode, embedded newlines/tabs, DECIMAL/DATE/TIMESTAMP,
   ARRAY/MAP/STRUCT textual values, protocol V6 fallback, and query cancellation
+- session properties and variables, init scripts, `--force`, custom delimiters,
+  streaming tables, JSONL, binary formats, and the extended REPL commands
 
 No unit tests are used. The verification mechanism is the E2E suite under
 `cmd/hive/e2e/`, which talks to a real server and writes a repeatable
@@ -195,6 +197,34 @@ HIVE_CONF_DIR  HIVE_HOME
 `hive.server2.use.SSL`. HTTP transport or SSL being enabled is reported as an
 unsupported configuration rather than silently ignored.
 
+## Scripts and variables
+
+```bash
+hive ... -i init.sql -f report.sql          # init script, then the main script
+hive ... --force -f cleanup.sql             # keep going after errors; exit 1
+hive ... --delimiter ';;' -f statements.sql
+hive ... --hivevar day=2026-11-07 \
+        --hiveconf hive.exec.parallel=true \
+        -e 'SELECT * FROM events WHERE dt = "${hivevar:day}"'
+```
+
+- `--hiveconf K=V` sets a Hive session configuration property. `--hivevar K=V`
+  defines a client-side variable. Both options may be repeated.
+- `${hivevar:name}`, `${hiveconf:name}`, `${env:NAME}` and `${system:name}` are
+  substituted before a statement is sent. A bare `${name}` means a hivevar.
+  Undefined variables are an error; write `\${...}` for a literal reference.
+- `-i/--init-file` runs before the main script or REPL and may contain meta
+  commands. `--force` continues after statement errors and exits 1 at the end.
+  `--delimiter` accepts a multi-character terminator outside quotes and
+  comments.
+- `-w/--password-file` reads the password from a file (the file must not also
+  be passed with `-p`). A warning is printed when the file is accessible by
+  other users.
+- Unsupported JDBC URL options such as `serviceDiscoveryMode=zooKeeper`,
+  `ssl=true`, `transportMode=http` and `principal=...` are rejected with an
+  explicit error. `;hiveconf:KEY=VALUE` and `;hivevar:NAME=VALUE` URL parameters
+  are accepted.
+
 ## Output
 
 ```bash
@@ -203,17 +233,28 @@ hive ... --output-format vertical
 hive ... --output-format csv
 hive ... --output-format tsv
 hive ... --output-format json
+hive ... --output-format jsonl       # one JSON object per line
 hive ... --no-header --null-string '<null>'
+hive ... --null-empty --max-column-width 40
+hive ... --stream                    # stream table rows instead of buffering
+hive ... --binary-format hex         # text, base64 (default) or hex
 ```
 
 - Result data goes to stdout; status, errors, info, and timing go to stderr.
 - Table/vertical/TSV escape control characters visibly (`\n`, `\t`, `\r`, `\\`).
+  Column widths use terminal display width, so CJK and emoji align correctly.
 - CSV follows RFC 4180 quoting and keeps embedded newlines inside quoted fields.
 - JSON preserves NULL as `null`, booleans as booleans, integer/float values as
-  numbers, and binary values as base64. HiveServer2 returns DECIMAL, DATE,
-  TIMESTAMP, CHAR/VARCHAR, and complex values (ARRAY/MAP/STRUCT) as strings, so
-  those remain JSON strings; this avoids precision loss and matches the server
-  representation.
+  numbers, and binary values as base64 by default. JSON and JSONL are written
+  incrementally. HiveServer2 returns DECIMAL, DATE, TIMESTAMP, CHAR/VARCHAR,
+  and complex values (ARRAY/MAP/STRUCT) as strings, so those remain JSON
+  strings; this avoids precision loss and matches the server representation.
+- Table and vertical output buffer the result for optimal column widths. With
+  `--stream`, a table buffers the first 1000 rows and then writes rows as they
+  arrive; if a later value is wider than the current column, a new table block
+  is started with wider columns instead of truncating the value.
+- `--max-column-width` truncates table/vertical cells to a display width and
+  applies only to those formats; CSV, TSV, JSON and JSONL are never truncated.
 - `--fetch-size` controls rows per `FetchResults` call (default 1000). The client
   keeps fetching until the server returns an empty batch; Hive 3 has been
   observed to return `hasMoreRows=false` while more rows exist, so
@@ -229,7 +270,13 @@ Meta commands:
 ```
 !schemas              SHOW DATABASES
 !tables [pattern]     SHOW TABLES [LIKE 'pattern']
-!columns <table>      DESCRIBE <table>
+!columns <table>      DESCRIBE <table> (alias: !describe)
+!outputformat FMT     table, vertical, csv, tsv, json or jsonl
+!delimiter STR        set the statement delimiter (default ;)
+!run <file>           execute a script (alias: !source)
+!history              show command history
+!record [file|off]    record result output to a file
+!dbinfo               show server, protocol and authentication details
 !set                  show settings
 !set outputformat csv
 !set fetchsize 500
@@ -237,6 +284,8 @@ Meta commands:
 !set timing on|off
 !set header on|off
 !set nullstring <s>
+!set delimiter STR
+!set binaryformat text|base64|hex
 !fetchsize N
 !verbose on|off
 !timing on|off
@@ -244,9 +293,10 @@ Meta commands:
 !quit
 ```
 
-SQL statements end with `;`. Multiple statements in one line/file work. The
-splitter understands single/double quotes, backticks, `--` comments, `/* */`
-comments, backslash escapes, and doubled quotes.
+SQL statements end with `;` (or the delimiter set with `--delimiter`).
+Multiple statements in one line/file work. The splitter understands
+single/double quotes, backticks, `--` comments, `/* */` comments, backslash
+escapes, and doubled quotes.
 
 Ctrl-C cancels the running query through `CancelOperation` and returns to the
 prompt. In batch mode it exits with status 130. The session remains usable after
@@ -337,7 +387,8 @@ The IDL is `internal/tcliservice/TCLIService.thrift` (Apache Hive 4.0.0).
 - No Kerberos/GSSAPI, HTTP transport, TLS, or custom SASL mechanisms.
 - Complex type metadata from HiveServer2 is a primitive `ARRAY`/`MAP`/`STRUCT`
   entry, so the CLI displays those names rather than `ARRAY<STRING>`.
-- Table/vertical/JSON outputs buffer the full result set; CSV/TSV stream.
+- Table and vertical output buffer the full result set unless `--stream` is
+  used; CSV, TSV, JSON and JSONL stream.
 - No SQL parser, autocomplete, or syntax highlighting; statements are sent to
   the server as written.
 - No Kerberos means this cannot connect to most Kerberized production clusters.

@@ -14,6 +14,7 @@ Connection options:
                             (hive:// and jdbc:hive2:// prefixes are accepted)
   -n, --username NAME       username (default: current OS user)
   -p, --password PASS       password (prefer HIVE_PASSWORD or the prompt)
+  -w, --password-file FILE  read the password from FILE
       --auth MODE           none, nosasl or ldap (default: none)
       --protocol VERSION    auto, v10 or v6 (default: auto)
       --host HOST           server host (default: localhost)
@@ -26,15 +27,25 @@ Connection options:
 Execution options:
   -e, --execute SQL         execute SQL and exit
   -f, --file FILE           execute statements from FILE ('-' for stdin)
+  -i, --init-file FILE      run FILE before the main script or REPL
+      --hiveconf K=V        set a session Hive configuration property
+      --hivevar K=V         define a client variable for ${hivevar:K}
       --fetch-size N        rows per FetchResults call (default: 1000)
+      --delimiter STR       statement delimiter (default: ;)
+      --force               continue after statement errors; exit 1 at the end
       --verbose             print connection and statement details
       --timing              print per-statement timing
       --silent              suppress non-result status messages
 
 Output options:
-      --output-format FMT   table, vertical, csv, tsv or json (default: table)
+      --output-format FMT   table, vertical, csv, tsv, json or jsonl
+                            (default: table)
       --null-string STR     text used for NULL (default: NULL)
+      --null-empty          render NULL as an empty string
       --no-header           omit the header row for tabular output
+      --max-column-width N  truncate table/vertical cells to N display cells
+      --stream              stream table rows instead of buffering the result
+      --binary-format FMT   text, base64 or hex (default: base64)
 
 REPL options:
       --history-file FILE   history file (default: ~/.hive-go_history)
